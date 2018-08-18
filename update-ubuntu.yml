@@ -1,0 +1,75 @@
+---
+#
+# Install package updates on Ubuntu servers
+#
+
+- hosts: iy-swarm
+
+  become: true
+  serial : 1
+  any_errors_fatal: true
+
+  # Do an "apt-get update", to ensure latest package lists
+  tasks:
+    - name: apt update
+      apt:
+        update-cache: yes
+      changed_when: 0
+
+    # Get a list of packages that have updates
+    - name: get list of pending upgrades
+      command: apt --simulate dist-upgrade
+      args:
+        warn: false # don't warn us about apt having its own plugin
+      register: apt_simulate
+      changed_when: 0
+
+    # If a new kernel is incoming, remove old ones
+    - name: apt autoremove
+      command: apt -y autoremove
+      args:
+        warn: false
+      when: '"Inst linux-image-" in apt_simulate.stdout'
+      changed_when: 0
+
+    # Do the actual apt dist-upgrade
+    - name: apt dist-upgrade
+      apt:
+        upgrade: dist # upgrade all packages to latest version
+      register: upgrade_output
+
+    # Check if we need a reboot
+    - name: check if reboot needed
+      stat: path=/var/run/reboot-required
+      register: file_reboot_required
+
+    # "meta: end_play" aborts the rest of the tasks in the current «tasks:»
+    # section, for the current server
+    # "when:" clause ensures that the "meta: end_play" only triggers if the
+    # current webserver does _not_ need a reboot
+    - meta: end_play
+      when: not file_reboot_required.stat.exists
+
+    # Because of the above meta/when we at this point know that the current
+    # host needs a reboot
+
+    - name: reboot node
+      shell: sleep 10 && /sbin/shutdown -r now "Reboot triggered by ansible"
+      async: 1
+      poll: 0
+      ignore_errors: true
+
+    - name: wait for server to reboot
+      wait_for:
+        host: "{{ ansible_ssh_host }}"
+        port: 22
+        delay: 30
+        state: started
+      connection: local
+      become: no
+
+    # Wait a minute between hosts, unless we're on the last
+    - name: waiting between hosts
+      pause:
+        minutes: 1
+      when: inventory_hostname != ansible_play_hosts[-1]
