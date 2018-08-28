@@ -3,7 +3,7 @@
 # Install package updates on Ubuntu servers
 #
 
-- hosts: iy-swarm
+- hosts: "{{ nodes }}"
 
   become: true
   serial : 1
@@ -53,20 +53,20 @@
     # Because of the above meta/when we at this point know that the current
     # host needs a reboot
 
-    - name: reboot node
-      shell: sleep 10 && /sbin/shutdown -r now "Reboot triggered by ansible"
+    - name: reboot "{{ inventory_hostname }}"
+      shell: sleep 2 && /sbin/shutdown -r now "Reboot triggered by ansible"
       async: 1
       poll: 0
       ignore_errors: true
+      changed_when: true
+      register: reboot_after_kernel_update
 
-    - name: wait for server to reboot
-      wait_for:
-        host: "{{ ansible_ssh_host }}"
-        port: 22
+    - name: wait for "{{ inventory_hostname }}"
+      wait_for_connection:
         delay: 30
-        state: started
-      connection: local
-      become: no
+        sleep: 5
+        timeout: 300
+      when: reboot_after_kernel_update.changed
 
     # Wait a minute between hosts, unless we're on the last
     - name: waiting between hosts
